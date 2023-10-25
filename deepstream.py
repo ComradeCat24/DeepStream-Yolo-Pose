@@ -8,13 +8,14 @@ import time
 import argparse
 import platform
 from ctypes import *
+import math
 
 sys.path.append('/opt/nvidia/deepstream/deepstream/lib')
 import pyds
 
 MAX_ELEMENTS_IN_DISPLAY_META = 16
 
-SOURCE = ''
+SOURCE = []
 CONFIG_INFER = ''
 STREAMMUX_BATCH_SIZE = 1
 STREAMMUX_WIDTH = 1920
@@ -222,8 +223,8 @@ def cb_newpad(decodebin, pad, user_data):
 def create_uridecode_bin(stream_id, uri, streammux):
     bin_name = 'source-bin-%04d' % stream_id
     bin = Gst.ElementFactory.make('uridecodebin', bin_name)
-    if 'rtsp://' in uri:
-        pyds.configure_source_for_ntp_sync(bin)
+    # if 'rtsp://' in uri:
+        # pyds.configure_source_for_ntp_sync(bin)
     bin.set_property('uri', uri)
     pad_name = 'sink_%u' % stream_id
     streammux_sink_pad = streammux.get_request_pad(pad_name)
@@ -269,11 +270,12 @@ def main():
         sys.exit(1)
     pipeline.add(streammux)
 
-    source_bin = create_uridecode_bin(0, SOURCE, streammux)
-    if not source_bin:
-        sys.stderr.write('ERROR: Failed to create source_bin\n')
-        sys.exit(1)
-    pipeline.add(source_bin)
+    for i, uri in enumerate(SOURCE):
+        source_bin = create_uridecode_bin(i, uri, streammux)
+        if not source_bin:
+            sys.stderr.write(f'ERROR: Failed to create source_bin {i}\n')
+            sys.exit(1)
+        pipeline.add(source_bin)
 
     pgie = Gst.ElementFactory.make('nvinfer', 'pgie')
     if not pgie:
@@ -340,7 +342,24 @@ def main():
     sink.set_property('sync', 0)
     sink.set_property('qos', 0)
 
-    if 'file://' in SOURCE:
+    tiler = Gst.ElementFactory.make('nvmultistreamtiler','nvtiler')
+    if not tiler:
+        sys.stderr.write('Unable to create tiler')
+        sys.exit(1)
+
+    tiler_rows = int(math.sqrt(len(SOURCE)))
+    tiler_columns = int(math.ceil(1.0* len(SOURCE)/tiler_rows))
+    tiler.set_property('rows', tiler_rows)
+    tiler.set_property('columns', tiler_columns)
+    tiler.set_property('width',1280)
+    tiler.set_property('height',720)
+    tiler.set_property('show-source',1)
+    pipeline.add(tiler)
+    converter.link(tiler)
+    tiler.link(osd)
+    osd.link(sink)  
+
+    if 'file://' in SOURCE[0]:
         streammux.set_property('live-source', 0)
 
     if tracker.find_property('enable_batch_process') is not None:
@@ -400,7 +419,9 @@ def parse_args():
         PERF_MEASUREMENT_INTERVAL_SEC
 
     parser = argparse.ArgumentParser(description='DeepStream')
-    parser.add_argument('-s', '--source', required=True, help='Source stream/file')
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument('-s', '--source', nargs='+', help='Source stream/file')
+    source_group.add_argument('-i', '--input-file', help='Input file to read and store in SOURCE')
     parser.add_argument('-c', '--config-infer', required=True, help='Config infer file')
     parser.add_argument('-b', '--streammux-batch-size', type=int, default=1, help='Streammux batch-size (default: 1)')
     parser.add_argument('-w', '--streammux-width', type=int, default=1920, help='Streammux width (default: 1920)')
@@ -408,14 +429,18 @@ def parse_args():
     parser.add_argument('-g', '--gpu-id', type=int, default=0, help='GPU id (default: 0)')
     parser.add_argument('-f', '--fps-interval', type=int, default=5, help='FPS measurement interval (default: 5)')
     args = parser.parse_args()
-    if args.source == '':
+    if args.source == '' and args.input_file is None:
         sys.stderr.write('ERROR: Source not found\n')
         sys.exit(1)
     if args.config_infer == '' or not os.path.isfile(args.config_infer):
         sys.stderr.write('ERROR: Config infer not found\n')
         sys.exit(1)
 
-    SOURCE = args.source
+    if args.input_file is not None:
+        with open(args.input_file, 'r') as file:
+            SOURCE = file.read().splitlines()
+    else:
+        SOURCE = args.source
     CONFIG_INFER = args.config_infer
     STREAMMUX_BATCH_SIZE = args.streammux_batch_size
     STREAMMUX_WIDTH = args.streammux_width
