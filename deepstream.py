@@ -277,6 +277,12 @@ def main():
             sys.exit(1)
         pipeline.add(source_bin)
 
+    tiler = Gst.ElementFactory.make('nvmultistreamtiler', 'nvtiler')
+    if not tiler:
+        sys.stderr.write('ERROR: Failed to create nvmultistreamtiler\n')
+        sys.exit(1)
+    pipeline.add(tiler)
+
     pgie = Gst.ElementFactory.make('nvinfer', 'pgie')
     if not pgie:
         sys.stderr.write('ERROR: Failed to create nvinfer\n')
@@ -327,6 +333,12 @@ def main():
     streammux.set_property('enable-padding', 0)
     streammux.set_property('live-source', 1)
     streammux.set_property('attach-sys-ts', 1)
+    tiler_rows = int(math.sqrt(len(SOURCE)))
+    tiler_columns = int(math.ceil(1.0* len(SOURCE)/tiler_rows))
+    tiler.set_property('rows', tiler_rows)
+    tiler.set_property('columns', tiler_columns)
+    tiler.set_property('width', 1920)
+    tiler.set_property('height', 1080)
     pgie.set_property('config-file-path', CONFIG_INFER)
     pgie.set_property('qos', 0)
     tracker.set_property('tracker-width', 640)
@@ -383,7 +395,8 @@ def main():
     pipeline.add(osd)
     pipeline.add(sink)
 
-    streammux.link(pgie)
+    streammux.link(tiler)
+    tiler.link(pgie)
     pgie.link(tracker)
     tracker.link(converter)
     converter.link(osd)
@@ -400,18 +413,14 @@ def main():
     else:
         tracker_src_pad.add_probe(Gst.PadProbeType.BUFFER, tracker_src_pad_buffer_probe, 0)
 
-    pipeline.set_state(Gst.State.PLAYING)
-
-    sys.stdout.write('\n')
-
     try:
+        pipeline.set_state(Gst.State.PLAYING)
+        sys.stdout.write('\n')
         loop.run()
-    except:
-        pass
-
-    pipeline.set_state(Gst.State.NULL)
-
-    sys.stdout.write('\n')
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        pipeline.set_state(Gst.State.NULL)
 
 
 def parse_args():
