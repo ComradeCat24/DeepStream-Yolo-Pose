@@ -379,13 +379,16 @@ def main():
 
     if tracker.find_property('enable_past_frame') is not None:
         tracker.set_property('enable_past_frame', 1)
-
+                
     if not is_aarch64():
-        streammux.set_property('nvbuf-memory-type', 0)
+        mem_type = int(pyds.NVBUF_MEM_CUDA_UNIFIED)
+        streammux.set_property('nvbuf-memory-type', mem_type)
         streammux.set_property('gpu_id', GPU_ID)
+        tiler.set_property('nvbuf-memory-type', mem_type)
+        tiler.set_property('gpu_id', GPU_ID)
         pgie.set_property('gpu_id', GPU_ID)
         tracker.set_property('gpu_id', GPU_ID)
-        converter.set_property('nvbuf-memory-type', 0)
+        converter.set_property('nvbuf-memory-type', mem_type)
         converter.set_property('gpu_id', GPU_ID)
         osd.set_property('gpu_id', GPU_ID)
 
