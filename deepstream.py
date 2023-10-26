@@ -354,26 +354,6 @@ def main():
     sink.set_property('sync', 0)
     sink.set_property('qos', 0)
 
-    tiler = Gst.ElementFactory.make('nvmultistreamtiler','nvtiler')
-    if not tiler:
-        sys.stderr.write('Unable to create tiler')
-        sys.exit(1)
-
-    tiler_rows = int(math.sqrt(len(SOURCE)))
-    tiler_columns = int(math.ceil(1.0* len(SOURCE)/tiler_rows))
-    tiler.set_property('rows', tiler_rows)
-    tiler.set_property('columns', tiler_columns)
-    tiler.set_property('width',1280)
-    tiler.set_property('height',720)
-    tiler.set_property('show-source',1)
-    pipeline.add(tiler)
-    converter.link(tiler)
-    tiler.link(osd)
-    osd.link(sink)  
-
-    if 'file://' in SOURCE[0]:
-        streammux.set_property('live-source', 0)
-
     if tracker.find_property('enable_batch_process') is not None:
         tracker.set_property('enable_batch_process', 1)
 
