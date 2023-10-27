@@ -223,8 +223,8 @@ def cb_newpad(decodebin, pad, user_data):
 def create_uridecode_bin(stream_id, uri, streammux):
     bin_name = 'source-bin-%04d' % stream_id
     bin = Gst.ElementFactory.make('uridecodebin', bin_name)
-    # if 'rtsp://' in uri:
-        # pyds.configure_source_for_ntp_sync(bin)
+    if 'rtsp://' in uri:
+        pyds.configure_source_for_ntp_sync(hash(bin))
     bin.set_property('uri', uri)
     pad_name = 'sink_%u' % stream_id
     streammux_sink_pad = streammux.get_request_pad(pad_name)
