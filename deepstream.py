@@ -9,6 +9,7 @@ import argparse
 import platform
 from ctypes import *
 import math
+import re
 
 sys.path.append('/opt/nvidia/deepstream/deepstream/lib')
 import pyds
@@ -28,6 +29,8 @@ skeleton = [[16, 14], [14, 12], [17, 15], [15, 13], [12, 13], [6, 12], [7, 13], 
 
 start_time = time.time()
 fps_streams = {}
+scr2uri = {}
+uri_ppl_count = {}
 
 
 class GETFPS:
@@ -159,17 +162,19 @@ def tracker_src_pad_buffer_probe(pad, info, user_data):
 
     l_frame = batch_meta.frame_meta_list
     while l_frame:
+        people_count = 0
         try:
             frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
         except StopIteration:
             break
-
+        
         current_index = frame_meta.source_id
 
         l_obj = frame_meta.obj_meta_list
         while l_obj:
             try:
                 obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
+                people_count += 1
             except StopIteration:
                 break
 
@@ -181,12 +186,17 @@ def tracker_src_pad_buffer_probe(pad, info, user_data):
             except StopIteration:
                 break
 
-        fps_streams['stream{0}'.format(current_index)].get_fps()
+        # fps_streams['stream{0}'.format(current_index)].get_fps()
+        # print(f'{current_index}: {people_count}')
+        uri = scr2uri[current_index]
+        uri_ppl_count[uri] = people_count
 
         try:
             l_frame = l_frame.next
         except StopIteration:
             break
+    
+    # print(uri_ppl_count)
 
     return Gst.PadProbeReturn.OK
 
@@ -221,16 +231,19 @@ def cb_newpad(decodebin, pad, user_data):
 
 
 def create_uridecode_bin(stream_id, uri, streammux):
-    bin_name = 'source-bin-%04d' % stream_id
+    uri_name = uri.split("@")[-1]
+    print(uri_name)
+    bin_name = f'source-bin-{stream_id}'
     bin = Gst.ElementFactory.make('uridecodebin', bin_name)
     if 'rtsp://' in uri:
         pyds.configure_source_for_ntp_sync(hash(bin))
     bin.set_property('uri', uri)
-    pad_name = 'sink_%u' % stream_id
+    pad_name = f'sink_{stream_id}'
     streammux_sink_pad = streammux.get_request_pad(pad_name)
     bin.connect('pad-added', cb_newpad, streammux_sink_pad)
     bin.connect('child-added', decodebin_child_added, 0)
-    fps_streams['stream{0}'.format(stream_id)] = GETFPS(stream_id)
+    # fps_streams['stream{0}'.format(stream_id)] = GETFPS(stream_id)
+    scr2uri[stream_id] = uri_name
     return bin
 
 
@@ -337,8 +350,8 @@ def main():
     tiler_columns = int(math.ceil(1.0* len(SOURCE)/tiler_rows))
     tiler.set_property('rows', tiler_rows)
     tiler.set_property('columns', tiler_columns)
-    tiler.set_property('width', 1920)
-    tiler.set_property('height', 1080)
+    tiler.set_property('width', STREAMMUX_WIDTH)
+    tiler.set_property('height', STREAMMUX_HEIGHT)
     pgie.set_property('config-file-path', CONFIG_INFER)
     pgie.set_property('qos', 0)
     tracker.set_property('tracker-width', 640)
@@ -378,11 +391,11 @@ def main():
     pipeline.add(osd)
     pipeline.add(sink)
 
-    streammux.link(tiler)
-    tiler.link(pgie)
+    streammux.link(pgie)
     pgie.link(tracker)
     tracker.link(converter)
-    converter.link(osd)
+    converter.link(tiler)
+    tiler.link(osd)
     osd.link(sink)
 
     bus = pipeline.get_bus()
@@ -433,8 +446,8 @@ def parse_args():
             SOURCE = file.read().splitlines()
     else:
         SOURCE = args.source
+    STREAMMUX_BATCH_SIZE = len(SOURCE)
     CONFIG_INFER = args.config_infer
-    STREAMMUX_BATCH_SIZE = args.streammux_batch_size
     STREAMMUX_WIDTH = args.streammux_width
     STREAMMUX_HEIGHT = args.streammux_height
     GPU_ID = args.gpu_id
