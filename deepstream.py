@@ -9,10 +9,14 @@ import argparse
 import platform
 from ctypes import *
 import math
-import re
+import asyncio
+import aiohttp
 
 sys.path.append('/opt/nvidia/deepstream/deepstream/lib')
 import pyds
+from dotenv import load_dotenv
+
+load_dotenv()
 
 MAX_ELEMENTS_IN_DISPLAY_META = 16
 
@@ -29,8 +33,35 @@ skeleton = [[16, 14], [14, 12], [17, 15], [15, 13], [12, 13], [6, 12], [7, 13], 
 
 start_time = time.time()
 fps_streams = {}
+url = os.getenv('URL')
 scr2uri = {}
 uri_ppl_count = {}
+
+
+async def async_req():
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=uri_ppl_count) as response:
+            # pass
+            print("Status:", response.status)
+            print("Content-type:", response.headers['content-type'])
+
+            html = await response.text()
+            print("Body:", html)
+
+
+class POSTDATA:
+    def __init__(self):
+        global start_time
+        self.start_time = start_time
+
+    def post_data(self):
+        end_time = time.time()
+        current_time = end_time - self.start_time
+        if current_time > PERF_MEASUREMENT_INTERVAL_SEC:
+            asyncio.run(async_req())
+            self.start_time = time.time()
+        else:
+            pass
 
 
 class GETFPS:
@@ -60,6 +91,7 @@ class GETFPS:
         else:
             self.frame_count = self.frame_count + 1
 
+posting_data = POSTDATA()
 
 def set_custom_bbox(obj_meta):
     border_width = 6
@@ -101,20 +133,25 @@ def parse_pose_from_meta(frame_meta, obj_meta):
 
     for i in range(num_joints):
         data = obj_meta.mask_params.get_mask_array()
-        xc = int((data[i * 3 + 0] - pad_x) / gain)
-        yc = int((data[i * 3 + 1] - pad_y) / gain)
-        confidence = data[i * 3 + 2]
+
+        # Extract information for the i-th joint from the mask array
+        xc = int((data[i * 3 + 0] - pad_x) / gain)  # X-coordinate
+        yc = int((data[i * 3 + 1] - pad_y) / gain)  # Y-coordinate
+        confidence = data[i * 3 + 2]  # Confidence score
 
         if confidence < 0.5:
-            continue
-
+            continue    # Skip if average confidence is low
+            
+       # Check if the current number of lines in display metadata is 16
         if display_meta.num_circles == MAX_ELEMENTS_IN_DISPLAY_META:
+            # Acquire a new display metadata instance from the pool associated with batch metadata
             display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
+            # Add the newly acquired display metadata to the current frame's metadata
             pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
 
         circle_params = display_meta.circle_params[display_meta.num_circles]
-        circle_params.xc = xc
-        circle_params.yc = yc
+        circle_params.xc = abs(xc)  # TEMP FIX
+        circle_params.yc = abs(yc)  # TEMP FIX
         circle_params.radius = 6
         circle_params.circle_color.red = 1.0
         circle_params.circle_color.green = 1.0
@@ -129,31 +166,108 @@ def parse_pose_from_meta(frame_meta, obj_meta):
 
     for i in range(num_joints + 2):
         data = obj_meta.mask_params.get_mask_array()
-        x1 = int((data[(skeleton[i][0] - 1) * 3 + 0] - pad_x) / gain)
-        y1 = int((data[(skeleton[i][0] - 1) * 3 + 1] - pad_y) / gain)
-        confidence1 = data[(skeleton[i][0] - 1) * 3 + 2]
-        x2 = int((data[(skeleton[i][1] - 1) * 3 + 0] - pad_x) / gain)
-        y2 = int((data[(skeleton[i][1] - 1) * 3 + 1] - pad_y) / gain)
-        confidence2 = data[(skeleton[i][1] - 1) * 3 + 2]
+
+        # Extract information for the i-th joint pair from the mask array and skeleton
+        x1 = int((data[(skeleton[i][0] - 1) * 3 + 0] - pad_x) / gain)  # X-coordinate for joint 1
+        y1 = int((data[(skeleton[i][0] - 1) * 3 + 1] - pad_y) / gain)  # Y-coordinate for joint 1
+        confidence1 = data[(skeleton[i][0] - 1) * 3 + 2]  # Confidence for joint 1
+
+        x2 = int((data[(skeleton[i][1] - 1) * 3 + 0] - pad_x) / gain)  # X-coordinate for joint 2
+        y2 = int((data[(skeleton[i][1] - 1) * 3 + 1] - pad_y) / gain)  # Y-coordinate for joint 2
+        confidence2 = data[(skeleton[i][1] - 1) * 3 + 2]  # Confidence for joint 2
 
         if confidence1 < 0.5 or confidence2 < 0.5:
-            continue
+            continue    # Skip if average confidence is low
 
+        # Check if the current number of lines in display metadata is 16
         if display_meta.num_lines == MAX_ELEMENTS_IN_DISPLAY_META:
+            # Acquire a new display metadata instance from the pool associated with batch metadata
             display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
+            # Add the newly acquired display metadata to the current frame's metadata
             pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
 
         line_params = display_meta.line_params[display_meta.num_lines]
-        line_params.x1 = x1
-        line_params.y1 = y1
-        line_params.x2 = x2
-        line_params.y2 = y2
+        line_params.x1 = abs(x1)  # TEMP FIX
+        line_params.y1 = abs(y1)  # TEMP FIX
+        line_params.x2 = abs(x2)  # TEMP FIX
+        line_params.y2 = abs(y2)  # TEMP FIX
         line_params.line_width = 6
         line_params.line_color.red = 0.0
         line_params.line_color.green = 0.0
         line_params.line_color.blue = 1.0
         line_params.line_color.alpha = 1.0
         display_meta.num_lines += 1
+
+# def get_object_center(frame_meta, obj_meta):
+#     gain = min(obj_meta.mask_params.width / STREAMMUX_WIDTH,
+#                obj_meta.mask_params.height / STREAMMUX_HEIGHT)
+#     pad_x = (obj_meta.mask_params.width - STREAMMUX_WIDTH * gain) / 2.0
+#     pad_y = (obj_meta.mask_params.height - STREAMMUX_HEIGHT * gain) / 2.0
+
+
+#     data = obj_meta.mask_params.get_mask_array()
+
+#     # Calculate the average X and Y coordinates for all joints
+#     num_joints = len(data) // 3
+#     sum_x = sum(data[i * 3] for i in range(num_joints))
+#     sum_y = sum(data[i * 3 + 1] for i in range(num_joints))
+#     avg_x = int((sum_x / num_joints - pad_x) / gain)  # Average X-coordinate
+#     avg_y = int((sum_y / num_joints - pad_y) / gain)  # Average Y-coordinate
+
+#     # Calculate the confidence as the average confidence score
+#     avg_confidence = sum(data[i * 3 + 2] for i in range(num_joints)) / num_joints
+
+#     if avg_confidence < 0.5:
+#         return  # Skip if average confidence is low
+
+#     # Create a display metadata instance
+#     batch_meta = frame_meta.base_meta.batch_meta
+#     display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
+#     pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
+
+#     # Add a single center point to the display metadata
+#     circle_params = display_meta.circle_params[0] 
+#     circle_params.xc = abs(avg_x)  # TEMP FIX
+#     circle_params.yc = abs(avg_y)  # TEMP FIX
+#     circle_params.radius = 12
+#     circle_params.circle_color.red = 1.0
+#     circle_params.circle_color.green = 1.0
+#     circle_params.circle_color.blue = 1.0
+#     circle_params.circle_color.alpha = 1.0
+#     circle_params.has_bg_color = 1
+#     circle_params.bg_color.red = 0.0
+#     circle_params.bg_color.green = 0.0
+#     circle_params.bg_color.blue = 0.0
+#     circle_params.bg_color.alpha = 1.0
+#     display_meta.num_circles = 1
+
+def draw_bottom_center_circle(frame_meta, obj_meta):
+    # Calculate the center of the bounding box
+    center_x = int(obj_meta.rect_params.left + obj_meta.rect_params.width / 2)
+    center_y = int(obj_meta.rect_params.top + obj_meta.rect_params.height)
+
+    # Acquire a display metadata instance from the batch metadata
+    batch_meta = frame_meta.base_meta.batch_meta
+    display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
+
+    # Add a single center point (circle) to the display metadata
+    circle_params = display_meta.circle_params[0]
+    circle_params.xc = center_x
+    circle_params.yc = center_y
+    circle_params.radius = 6
+    circle_params.circle_color.red = 1.0
+    circle_params.circle_color.green = 1.0
+    circle_params.circle_color.blue = 1.0
+    circle_params.circle_color.alpha = 1.0
+    circle_params.has_bg_color = 1
+    circle_params.bg_color.red = 0.0
+    circle_params.bg_color.green = 0.0
+    circle_params.bg_color.blue = 1.0
+    circle_params.bg_color.alpha = 1.0
+    display_meta.num_circles = 1  # Set the number of circles to 1
+
+    # Add the display metadata to the frame
+    pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
 
 
 def tracker_src_pad_buffer_probe(pad, info, user_data):
@@ -180,6 +294,8 @@ def tracker_src_pad_buffer_probe(pad, info, user_data):
 
             parse_pose_from_meta(frame_meta, obj_meta)
             set_custom_bbox(obj_meta)
+            # get_object_center(frame_meta, obj_meta)
+            # draw_bottom_center_circle(frame_meta, obj_meta)
 
             try:
                 l_obj = l_obj.next
@@ -197,6 +313,7 @@ def tracker_src_pad_buffer_probe(pad, info, user_data):
             break
     
     # print(uri_ppl_count)
+    posting_data.post_data()
 
     return Gst.PadProbeReturn.OK
 
@@ -294,7 +411,6 @@ def main():
     if not tiler:
         sys.stderr.write('ERROR: Failed to create nvmultistreamtiler\n')
         sys.exit(1)
-    pipeline.add(tiler)
 
     pgie = Gst.ElementFactory.make('nvinfer', 'pgie')
     if not pgie:
@@ -345,6 +461,7 @@ def main():
     streammux.set_property('height', STREAMMUX_HEIGHT)
     streammux.set_property('enable-padding', 0)
     streammux.set_property('live-source', 1)
+    streammux.set_property('sync-inputs', 1)
     streammux.set_property('attach-sys-ts', 1)
     tiler_rows = int(math.sqrt(len(SOURCE)))
     tiler_columns = int(math.ceil(1.0* len(SOURCE)/tiler_rows))
@@ -375,7 +492,7 @@ def main():
                 
     if not is_aarch64():
         mem_type = int(pyds.NVBUF_MEM_CUDA_UNIFIED)
-        streammux.set_property('nvbuf-memory-type', mem_type)
+        # streammux.set_property('nvbuf-memory-type', mem_type)
         streammux.set_property('gpu_id', GPU_ID)
         tiler.set_property('nvbuf-memory-type', mem_type)
         tiler.set_property('gpu_id', GPU_ID)
@@ -388,6 +505,7 @@ def main():
     pipeline.add(pgie)
     pipeline.add(tracker)
     pipeline.add(converter)
+    pipeline.add(tiler)
     pipeline.add(osd)
     pipeline.add(sink)
 
@@ -397,19 +515,23 @@ def main():
     converter.link(tiler)
     tiler.link(osd)
     osd.link(sink)
+    
+    dot_data = Gst.debug_bin_to_dot_data(pipeline, Gst.DebugGraphDetails.ALL)
+    with open("pipeline.dot", "w") as dot_file:
+        dot_file.write(dot_data)
 
     bus = pipeline.get_bus()
     bus.add_signal_watch()
     bus.connect('message', bus_call, loop)
-
     tracker_src_pad = tracker.get_static_pad('src')
     if not tracker_src_pad:
         sys.stderr.write('ERROR: Failed to get tracker src pad\n')
         sys.exit(1)
     else:
         tracker_src_pad.add_probe(Gst.PadProbeType.BUFFER, tracker_src_pad_buffer_probe, 0)
-
+    
     try:
+        print("Starting pipeline \n")
         pipeline.set_state(Gst.State.PLAYING)
         sys.stdout.write('\n')
         loop.run()
