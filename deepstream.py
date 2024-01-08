@@ -14,6 +14,9 @@ import aiohttp
 
 sys.path.append('/opt/nvidia/deepstream/deepstream/lib')
 import pyds
+import cv2
+import numpy as np
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -23,8 +26,8 @@ MAX_ELEMENTS_IN_DISPLAY_META = 16
 SOURCE = []
 CONFIG_INFER = ''
 STREAMMUX_BATCH_SIZE = 1
-STREAMMUX_WIDTH = 1920
-STREAMMUX_HEIGHT = 1080
+STREAMMUX_WIDTH = 1280
+STREAMMUX_HEIGHT = 720
 GPU_ID = 0
 PERF_MEASUREMENT_INTERVAL_SEC = 5
 
@@ -36,6 +39,8 @@ fps_streams = {}
 url = os.getenv('URL')
 scr2uri = {}
 uri_ppl_count = {}
+uri_floor_position = {}
+uri_homography_mapping = {}
 
 
 async def async_req():
@@ -59,6 +64,31 @@ class POSTDATA:
         current_time = end_time - self.start_time
         if current_time > PERF_MEASUREMENT_INTERVAL_SEC:
             asyncio.run(async_req())
+            self.start_time = time.time()
+        else:
+            pass
+
+
+async def async_pos_req():
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=uri_floor_position) as response:
+            # pass
+            print("Status:", response.status)
+            print("Content-type:", response.headers['content-type'])
+
+            html = await response.text()
+            # print("Body:", html)
+
+class POST_POSITION_DATA:
+    def __init__(self):
+        global start_time
+        self.start_time = start_time
+
+    def post_data(self):
+        end_time = time.time()
+        current_time = end_time - self.start_time
+        if current_time > PERF_MEASUREMENT_INTERVAL_SEC:
+            asyncio.run(async_pos_req())
             self.start_time = time.time()
         else:
             pass
@@ -198,53 +228,11 @@ def parse_pose_from_meta(frame_meta, obj_meta):
         line_params.line_color.alpha = 1.0
         display_meta.num_lines += 1
 
-# def get_object_center(frame_meta, obj_meta):
-#     gain = min(obj_meta.mask_params.width / STREAMMUX_WIDTH,
-#                obj_meta.mask_params.height / STREAMMUX_HEIGHT)
-#     pad_x = (obj_meta.mask_params.width - STREAMMUX_WIDTH * gain) / 2.0
-#     pad_y = (obj_meta.mask_params.height - STREAMMUX_HEIGHT * gain) / 2.0
-
-
-#     data = obj_meta.mask_params.get_mask_array()
-
-#     # Calculate the average X and Y coordinates for all joints
-#     num_joints = len(data) // 3
-#     sum_x = sum(data[i * 3] for i in range(num_joints))
-#     sum_y = sum(data[i * 3 + 1] for i in range(num_joints))
-#     avg_x = int((sum_x / num_joints - pad_x) / gain)  # Average X-coordinate
-#     avg_y = int((sum_y / num_joints - pad_y) / gain)  # Average Y-coordinate
-
-#     # Calculate the confidence as the average confidence score
-#     avg_confidence = sum(data[i * 3 + 2] for i in range(num_joints)) / num_joints
-
-#     if avg_confidence < 0.5:
-#         return  # Skip if average confidence is low
-
-#     # Create a display metadata instance
-#     batch_meta = frame_meta.base_meta.batch_meta
-#     display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
-#     pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
-
-#     # Add a single center point to the display metadata
-#     circle_params = display_meta.circle_params[0] 
-#     circle_params.xc = abs(avg_x)  # TEMP FIX
-#     circle_params.yc = abs(avg_y)  # TEMP FIX
-#     circle_params.radius = 12
-#     circle_params.circle_color.red = 1.0
-#     circle_params.circle_color.green = 1.0
-#     circle_params.circle_color.blue = 1.0
-#     circle_params.circle_color.alpha = 1.0
-#     circle_params.has_bg_color = 1
-#     circle_params.bg_color.red = 0.0
-#     circle_params.bg_color.green = 0.0
-#     circle_params.bg_color.blue = 0.0
-#     circle_params.bg_color.alpha = 1.0
-#     display_meta.num_circles = 1
 
 def draw_bottom_center_circle(frame_meta, obj_meta):
     # Calculate the center of the bounding box
     center_x = int(obj_meta.rect_params.left + obj_meta.rect_params.width / 2)
-    center_y = int(obj_meta.rect_params.top + obj_meta.rect_params.height)
+    center_y = int(obj_meta.rect_params.top + obj_meta.rect_params.height / 2)
 
     # Acquire a display metadata instance from the batch metadata
     batch_meta = frame_meta.base_meta.batch_meta
@@ -262,12 +250,35 @@ def draw_bottom_center_circle(frame_meta, obj_meta):
     circle_params.has_bg_color = 1
     circle_params.bg_color.red = 0.0
     circle_params.bg_color.green = 0.0
-    circle_params.bg_color.blue = 1.0
+    circle_params.bg_color.blue = 0.0
     circle_params.bg_color.alpha = 1.0
-    display_meta.num_circles = 1  # Set the number of circles to 1
+    display_meta.num_circles = 1
 
     # Add the display metadata to the frame
     pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
+
+    return center_x, center_y
+
+
+posting_pos_data = POST_POSITION_DATA()
+
+def floormapping(current_index, mapping_points):
+    global uri_homography_mapping
+    uri = scr2uri[current_index]
+
+    camera_pred_position = np.array([[mapping_points]], dtype='float32')    # Person's Position
+    
+    # print(uri_homography_mapping)
+    floor_position = cv2.perspectiveTransform(camera_pred_position, uri_homography_mapping[uri]["homography_matrix"])
+
+    uri_floor_position[uri] = floor_position[0][0].tolist()
+    timestamp = datetime.now().strftime("%Y-%m-%d, %H:%M:%S")
+    position_str = f"{timestamp}, {uri_floor_position[uri]}\n"
+
+    with open("floor_positions.txt", 'a') as file:
+        file.write(position_str)
+
+    return floor_position
 
 
 def tracker_src_pad_buffer_probe(pad, info, user_data):
@@ -294,8 +305,9 @@ def tracker_src_pad_buffer_probe(pad, info, user_data):
 
             parse_pose_from_meta(frame_meta, obj_meta)
             set_custom_bbox(obj_meta)
-            # get_object_center(frame_meta, obj_meta)
-            # draw_bottom_center_circle(frame_meta, obj_meta)
+            mapping_points = draw_bottom_center_circle(frame_meta, obj_meta)
+
+            floormapping(current_index, mapping_points)
 
             try:
                 l_obj = l_obj.next
@@ -314,9 +326,53 @@ def tracker_src_pad_buffer_probe(pad, info, user_data):
     
     # print(uri_ppl_count)
     posting_data.post_data()
+    posting_pos_data.post_data()
 
     return Gst.PadProbeReturn.OK
 
+def streammux_src_pad_buffer_probe(pad, info, user_data):
+    global uri_homography_mapping
+    buf = info.get_buffer()
+    batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(buf))
+
+    l_frame = batch_meta.frame_meta_list
+    while l_frame:
+        try:
+            frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
+        except StopIteration:
+            break
+        
+        current_index = frame_meta.source_id
+
+        uri = scr2uri[current_index]
+
+        # MANUAL WORK
+        uri_homography_mapping = {
+            # '10.185.151.2xx' : {
+            #     }
+            '10.185.151.213' : {
+                "camera_calib_pts" : np.array([[179, 466], [963, 655], [1005, 438], [338, 199], [488, 239], [547, 199], [657, 75], [755, 11]]), 
+                "floor_calib_pts" : np.array([[215, 553], [285, 531], [285, 502], [201, 485], [215, 485], [215, 475], [215, 401], [215, 332]])
+                },
+            # '10.185.151.2xx' : {
+            #     }
+            }
+
+        homography_matrix, _ = cv2.findHomography(
+            uri_homography_mapping[uri]['camera_calib_pts'],
+            uri_homography_mapping[uri]['floor_calib_pts'], 
+            cv2.RANSAC, 5.0)
+
+        uri_homography_mapping[uri]['homography_matrix'] = homography_matrix
+
+        print(uri_homography_mapping)
+
+        try:
+            l_frame = l_frame.next
+        except StopIteration:
+            break
+
+    return Gst.PadProbeReturn.REMOVE
 
 def decodebin_child_added(child_proxy, Object, name, user_data):
     if name.find('decodebin') != -1:
@@ -523,13 +579,22 @@ def main():
     bus = pipeline.get_bus()
     bus.add_signal_watch()
     bus.connect('message', bus_call, loop)
+
+    streammux_src_pad = streammux.get_static_pad('src')
+    if not streammux_src_pad:
+        sys.stderr.write('ERROR: Failed to get streammux src pad\n')
+        sys.exit(1)
+    else:
+        streammux_src_pad.add_probe(Gst.PadProbeType.BUFFER, streammux_src_pad_buffer_probe, 0)
+
     tracker_src_pad = tracker.get_static_pad('src')
     if not tracker_src_pad:
         sys.stderr.write('ERROR: Failed to get tracker src pad\n')
         sys.exit(1)
     else:
         tracker_src_pad.add_probe(Gst.PadProbeType.BUFFER, tracker_src_pad_buffer_probe, 0)
-    
+
+
     try:
         print("Starting pipeline \n")
         pipeline.set_state(Gst.State.PLAYING)
@@ -551,8 +616,8 @@ def parse_args():
     source_group.add_argument('-i', '--input-file', help='Input file to read and store in SOURCE')
     parser.add_argument('-c', '--config-infer', required=True, help='Config infer file')
     parser.add_argument('-b', '--streammux-batch-size', type=int, default=1, help='Streammux batch-size (default: 1)')
-    parser.add_argument('-w', '--streammux-width', type=int, default=1920, help='Streammux width (default: 1920)')
-    parser.add_argument('-e', '--streammux-height', type=int, default=1080, help='Streammux height (default: 1080)')
+    parser.add_argument('-w', '--streammux-width', type=int, default=1280, help='Streammux width (default: 1280)')
+    parser.add_argument('-e', '--streammux-height', type=int, default=720, help='Streammux height (default: 720)')
     parser.add_argument('-g', '--gpu-id', type=int, default=0, help='GPU id (default: 0)')
     parser.add_argument('-f', '--fps-interval', type=int, default=5, help='FPS measurement interval (default: 5)')
     args = parser.parse_args()
