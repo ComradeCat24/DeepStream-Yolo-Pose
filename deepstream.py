@@ -77,7 +77,7 @@ async def async_pos_req():
             print("Content-type:", response.headers['content-type'])
 
             html = await response.text()
-            # print("Body:", html)
+            print("Body:", html)
 
 class POST_POSITION_DATA:
     def __init__(self):
@@ -260,7 +260,7 @@ def draw_bottom_center_circle(frame_meta, obj_meta):
     return center_x, center_y
 
 
-posting_pos_data = POST_POSITION_DATA()
+# posting_pos_data = POST_POSITION_DATA()
 
 def floormapping(current_index, mapping_points):
     global uri_homography_mapping
@@ -268,15 +268,21 @@ def floormapping(current_index, mapping_points):
 
     camera_pred_position = np.array([[mapping_points]], dtype='float32')    # Person's Position
     
-    # print(uri_homography_mapping)
     floor_position = cv2.perspectiveTransform(camera_pred_position, uri_homography_mapping[uri]["homography_matrix"])
 
     uri_floor_position[uri] = floor_position[0][0].tolist()
-    timestamp = datetime.now().strftime("%Y-%m-%d, %H:%M:%S")
-    position_str = f"{timestamp}, {uri_floor_position[uri]}\n"
+    timestamp = datetime.now().strftime("%Y-%m-%d,%H:%M:%S")
+    headers = "URI,Date,Time,X_Position,Y_Position\n"
+    position_str = f"{uri},{timestamp},{uri_floor_position[uri][0]},{uri_floor_position[uri][1]}\n"
 
-    with open("floor_positions.txt", 'a') as file:
-        file.write(position_str)
+    print(f"{position_str}")
+    try:
+        with open("floor_positions.csv", 'a') as file:
+            if file.tell() == 0:
+                file.write(headers)
+            file.write(position_str)
+    except Exception as e:
+        print(f"ERROR: {e}")
 
     return floor_position
 
@@ -325,8 +331,8 @@ def tracker_src_pad_buffer_probe(pad, info, user_data):
             break
     
     # print(uri_ppl_count)
-    posting_data.post_data()
-    posting_pos_data.post_data()
+    # posting_data.post_data()
+    # posting_pos_data.post_data()
 
     return Gst.PadProbeReturn.OK
 
@@ -358,14 +364,12 @@ def streammux_src_pad_buffer_probe(pad, info, user_data):
             #     }
             }
 
-        homography_matrix, _ = cv2.findHomography(
-            uri_homography_mapping[uri]['camera_calib_pts'],
-            uri_homography_mapping[uri]['floor_calib_pts'], 
-            cv2.RANSAC, 5.0)
+        for _, data in uri_homography_mapping.items():
+            camera_pts = data['camera_calib_pts']
+            floor_pts = data['floor_calib_pts']
+            homography_matrix, _ = cv2.findHomography(camera_pts, floor_pts, cv2.RANSAC, 5.0)
 
-        uri_homography_mapping[uri]['homography_matrix'] = homography_matrix
-
-        print(uri_homography_mapping)
+            data['homography_matrix'] = homography_matrix
 
         try:
             l_frame = l_frame.next
