@@ -55,7 +55,7 @@ CFLAGS+= -I$(DS_SDK_ROOT)/sources/apps/apps-common/includes -I$(DS_SDK_ROOT)/sou
  	     -I/usr/local/cuda-$(CUDA_VER)/include
 
 CFLAGS+= `pkg-config --cflags $(PKGS)`
-LIBS:= `pkg-config --libs $(PKGS)`
+LIBS:= `pkg-config --libs $(PKGS)` -lm
 
 LIBS+= -L$(LIB_INSTALL_DIR) -lnvdsgst_meta -lnvds_meta -lnvdsgst_helper -L/usr/local/cuda-$(CUDA_VER)/lib64/ -lcudart \
        -lcuda -Wl,-rpath,$(LIB_INSTALL_DIR)

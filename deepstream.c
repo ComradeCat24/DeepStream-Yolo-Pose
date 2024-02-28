@@ -1,46 +1,19 @@
-/*
- * Copyright (c) 2018-2023, NVIDIA CORPORATION. All rights reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
- *
- * Edited by Marcos Luciano
- * https://www.github.com/marcoslucianops
- */
-
 #include "deepstream.h"
 
+
 GOptionEntry entries[] = {
-  {"source", 's', 0, G_OPTION_ARG_STRING, &SOURCE, "Source stream/file", NULL},
+  {"source", 's', 0, G_OPTION_ARG_STRING_ARRAY, &SOURCE, "Source stream/file", NULL},
+  {"input-file", 'i', 0, G_OPTION_ARG_STRING, &INPUT_FILE, "Input file containing sources", NULL},
   {"config-infer", 'c', 0, G_OPTION_ARG_STRING, &CONFIG_INFER, "Config infer file", NULL},
-  {"streammux-batch-size", 'b', 0, G_OPTION_ARG_INT, &STREAMMUX_BATCH_SIZE, "Streammux batch-size (default: 1)", NULL},
-  {"streammux-width", 'w', 0, G_OPTION_ARG_INT, &STREAMMUX_WIDTH, "Streammux width (default: 1920)", NULL},
-  {"streammux-height", 'e', 0, G_OPTION_ARG_INT, &STREAMMUX_HEIGHT, "Streammux height (default: 1080)", NULL},
   {"gpu-id", 'g', 0, G_OPTION_ARG_INT, &GPU_ID, "GPU id (default: 0)", NULL},
-  {"fps-interval", 'f', 0, G_OPTION_ARG_INT, &PERF_MEASUREMENT_INTERVAL_SEC, "FPS measurement interval (default: 5)", NULL},
   {NULL}
 };
 
 static void
 set_custom_bbox(NvDsObjectMeta *obj_meta)
 {
-  guint border_width = 6;
-  guint font_size = 18;
+  guint border_width = 2;
+  guint font_size = 12;
   guint x_offset = MIN(STREAMMUX_WIDTH - 1, (guint) MAX(0, (gint) (obj_meta->rect_params.left - (border_width / 2))));
   guint y_offset = MIN(STREAMMUX_HEIGHT - 1, (guint) MAX(0, (gint) (obj_meta->rect_params.top - (font_size * 2) + 1)));
 
@@ -95,7 +68,7 @@ parse_pose_from_meta(NvDsFrameMeta *frame_meta, NvDsObjectMeta *obj_meta)
     NvOSD_CircleParams *circle_params = &display_meta->circle_params[display_meta->num_circles];
     circle_params->xc = xc;
     circle_params->yc = yc;
-    circle_params->radius = 6;
+    circle_params->radius = 2;
     circle_params->circle_color.red = 1.0;
     circle_params->circle_color.green = 1.0;
     circle_params->circle_color.blue = 1.0;
@@ -130,7 +103,7 @@ parse_pose_from_meta(NvDsFrameMeta *frame_meta, NvDsObjectMeta *obj_meta)
     line_params->y1 = y1;
     line_params->x2 = x2;
     line_params->y2 = y2;
-    line_params->line_width = 6;
+    line_params->line_width = 2;
     line_params->line_color.red = 0.0;
     line_params->line_color.green = 0.0;
     line_params->line_color.blue = 1.0;
@@ -174,12 +147,7 @@ decodebin_child_added(GstChildProxy *child_proxy, GObject *object, gchar *name, 
   if (g_strrstr(name, "nvv4l2decoder") == name) {
     g_object_set(object, "drop-frame-interval", 0, NULL);
     g_object_set(object, "num-extra-surfaces", 1, NULL);
-    if (JETSON) {
-      g_object_set(object, "enable-max-performance", 1, NULL);
-    }
-    else {
-      g_object_set(object, "cudadec-memtype", 0, "gpu-id", GPU_ID, NULL);
-    }
+    g_object_set(object, "cudadec-memtype", 0, "gpu-id", GPU_ID, NULL);
   }
 }
 
@@ -271,6 +239,9 @@ bus_call(GstBus *bus, GstMessage *msg, gpointer user_data)
 gint
 main(gint argc, char *argv[])
 {
+
+  setenv("GST_DEBUG_DUMP_DOT_DIR", ".", 1);
+
   GOptionContext *ctx = g_option_context_new("DeepStream");
   GOptionGroup *group = g_option_group_new("deepstream", NULL, NULL, NULL, NULL);
   GError *error = NULL;
@@ -283,6 +254,17 @@ main(gint argc, char *argv[])
     return -1;
   }
   g_option_context_free(ctx);
+
+  if (INPUT_FILE) {
+    gchar *sources_text;
+    gsize length;
+    if (!g_file_get_contents(INPUT_FILE, &sources_text, &length, &error)) {
+      g_printerr("ERROR: Failed to read input file: %s\n", error->message);
+      return -1;
+    }
+    SOURCE = g_strsplit_set(sources_text, "\n", -1);
+    g_free(sources_text);
+  }
 
   if (!SOURCE) {
     g_printerr("ERROR: Source not found\n");
@@ -298,10 +280,6 @@ main(gint argc, char *argv[])
   cudaGetDevice(&current_device);
   struct cudaDeviceProp prop;
   cudaGetDeviceProperties(&prop, current_device);
-
-  if (prop.integrated) {
-    JETSON = TRUE;
-  }
 
   GMainLoop *loop = g_main_loop_new(NULL, FALSE);
 
@@ -320,12 +298,14 @@ main(gint argc, char *argv[])
   }
   gst_bin_add(GST_BIN(pipeline), streammux);
 
-  GstElement *source_bin = create_uridecode_bin(0, SOURCE, streammux);
-  if (!source_bin) {
-    g_printerr("ERROR: Failed to create source_bin\n");
-    return -1;
+  for (int i = 0; i < g_strv_length(SOURCE); i++) {
+    GstElement *source_bin = create_uridecode_bin(i, SOURCE[i], streammux);
+    if (!source_bin) {
+      g_printerr("ERROR: Failed to create source_bin for source %d\n", i);
+      return -1;
+    }
+    gst_bin_add(GST_BIN(pipeline), source_bin);
   }
-  gst_bin_add(GST_BIN(pipeline), source_bin);
 
   GstElement *pgie = gst_element_factory_make("nvinfer", "nvinfer");
   if (!pgie) {
@@ -335,6 +315,11 @@ main(gint argc, char *argv[])
   GstElement *tracker = gst_element_factory_make("nvtracker", "nvtracker");
   if (!tracker) {
     g_printerr("ERROR: Failed to create nvtracker\n");
+    return -1;
+  }
+  GstElement *tiler = gst_element_factory_make("nvmultistreamtiler", "nvtiler");
+  if (!tiler) {
+    g_printerr("ERROR: Failed to create nvmultistreamtiler\n");
     return -1;
   }
   GstElement *converter = gst_element_factory_make("nvvideoconvert", "nvvideoconvert");
@@ -348,45 +333,41 @@ main(gint argc, char *argv[])
     return -1;
   }
 
-  GstElement *sink = NULL;
-  if (JETSON) {
-    sink = gst_element_factory_make("nv3dsink", "nv3dsink");
-    if (!sink) {
-      g_printerr("ERROR: Failed to create nv3dsink\n");
-      return -1;
-    }
+  GstElement *sink = gst_element_factory_make("nveglglessink", "nveglglessink");
+  if (!sink) {
+    g_printerr("ERROR: Failed to create nveglglessink\n");
+    return -1;
   }
-  else {
-    sink = gst_element_factory_make("nveglglessink", "nveglglessink");
-    if (!sink) {
-      g_printerr("ERROR: Failed to create nveglglessink\n");
-      return -1;
-    }
-  }
-
   g_print("\n");
-  g_print("SOURCE: %s\n", SOURCE);
+  for (int i = 0; i < g_strv_length(SOURCE); i++) {
+      g_print("SOURCE %d: %s\n", i+1, SOURCE[i]);
+  }
   g_print("CONFIG_INFER: %s\n", CONFIG_INFER);
-  g_print("STREAMMUX_BATCH_SIZE: %d\n", STREAMMUX_BATCH_SIZE);
-  g_print("STREAMMUX_WIDTH: %d\n", STREAMMUX_WIDTH);
-  g_print("STREAMMUX_HEIGHT: %d\n", STREAMMUX_HEIGHT);
   g_print("GPU_ID: %d\n", GPU_ID);
-  g_print("PERF_MEASUREMENT_INTERVAL_SEC: %d\n", PERF_MEASUREMENT_INTERVAL_SEC);
-  g_print("JETSON: %s\n", JETSON ? "TRUE" : "FALSE");
   g_print("\n");
 
-  g_object_set(G_OBJECT(streammux), "batch-size", STREAMMUX_BATCH_SIZE, "batched-push-timeout", 25000,
-      "width", STREAMMUX_WIDTH, "height", STREAMMUX_HEIGHT, "enable-padding", 0, "live-source", 1, "attach-sys-ts", 1, NULL);
-  g_object_set(G_OBJECT(pgie), "config-file-path", CONFIG_INFER, "qos", 0, NULL);
+  // "batch-size", g_strv_length(SOURCE)
+  g_object_set(G_OBJECT(streammux), "batch-size",  g_strv_length(SOURCE), "batched-push-timeout", 25000,
+      "width", STREAMMUX_WIDTH, "height", STREAMMUX_HEIGHT, "enable-padding", 0,
+      "live-source", 1, "attach-sys-ts", 1,"nvbuf-memory-type", 0, "gpu_id", GPU_ID, NULL);
+  g_object_set(G_OBJECT(pgie), "config-file-path", CONFIG_INFER, "batch-size", g_strv_length(SOURCE), "qos", 0, "gpu_id", GPU_ID, NULL);
   g_object_set(G_OBJECT(tracker), "tracker-width", 640, "tracker-height", 384,
       "ll-lib-file", "/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so",
       "ll-config-file", "/opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/config_tracker_NvDCF_perf.yml",
-      "display-tracking-id", 1, "qos", 0, NULL);
-  g_object_set(G_OBJECT(osd), "process-mode", MODE_GPU, "qos", 0, NULL);
+      "display-tracking-id", 1, "qos", 0, "gpu_id", GPU_ID, NULL);
+  guint tiler_rows = (guint) sqrt (g_strv_length(SOURCE));
+  guint tiler_columns = (guint) ceil (1.0 * g_strv_length(SOURCE) / tiler_rows);
+  g_object_set(G_OBJECT(tiler), "rows", tiler_rows, "columns",
+      tiler_columns, "width", STREAMMUX_WIDTH, "height", STREAMMUX_HEIGHT, "gpu_id", GPU_ID, NULL);
+  g_object_set(G_OBJECT(converter), "nvbuf-memory-type", 0, "gpu_id", GPU_ID, NULL);
+  g_object_set(G_OBJECT(osd), "process-mode", MODE_GPU, "qos", 0, "gpu_id", GPU_ID, NULL);
   g_object_set(G_OBJECT(sink), "async", 0, "sync", 0, "qos", 0, NULL);
 
-  if (g_strrstr(SOURCE, "file://")) {
-    g_object_set(G_OBJECT(streammux), "live-source", 0, NULL);
+  for (int i = 0; i < g_strv_length(SOURCE); i++) {
+    if (g_strrstr(SOURCE[i], "file://")) {
+      g_object_set(G_OBJECT(streammux), "live-source", 0, NULL);
+      break;
+    }
   }
 
   if (g_object_class_find_property(G_OBJECT_GET_CLASS(G_OBJECT(tracker)), "enable_batch_process")) {
@@ -397,16 +378,8 @@ main(gint argc, char *argv[])
     g_object_set(G_OBJECT(tracker), "enable_past_frame", 1, NULL);
   }
 
-  if (!JETSON) {
-    g_object_set(G_OBJECT(streammux), "nvbuf-memory-type", 0, "gpu_id", GPU_ID, NULL);
-    g_object_set(G_OBJECT(pgie), "gpu_id", GPU_ID, NULL);
-    g_object_set(G_OBJECT(tracker), "gpu_id", GPU_ID, NULL);
-    g_object_set(G_OBJECT(converter), "nvbuf-memory-type", 0, "gpu_id", GPU_ID, NULL);
-    g_object_set(G_OBJECT(osd), "gpu_id", GPU_ID, NULL);
-  }
-
-  gst_bin_add_many(GST_BIN(pipeline), pgie, tracker, converter, osd, sink, NULL);
-  if (!gst_element_link_many(streammux, pgie, tracker, converter, osd, sink, NULL)) {
+  gst_bin_add_many(GST_BIN(pipeline), pgie, tracker, tiler, converter, osd, sink, NULL);
+  if (!gst_element_link_many(streammux, pgie, tracker, tiler, converter, osd, sink, NULL)) {
     g_printerr("ERROR: Pipeline elements could not be linked\n");
     return -1;
   }
@@ -424,18 +397,6 @@ main(gint argc, char *argv[])
     gst_pad_add_probe(tracker_src_pad, GST_PAD_PROBE_TYPE_BUFFER, tracker_src_pad_buffer_probe, NULL, NULL);
   gst_object_unref(tracker_src_pad);
 
-  NvDsAppPerfStructInt *perf_struct;
-  GstPad *converter_sink_pad = gst_element_get_static_pad(converter, "sink");
-  if (!converter_sink_pad) {
-    g_printerr("ERROR: Failed to get converter sink pad\n");
-    return -1;
-  }
-  else {
-    perf_struct = (NvDsAppPerfStructInt *) g_malloc0(sizeof(NvDsAppPerfStructInt));
-    enable_perf_measurement(perf_struct, converter_sink_pad, 1, PERF_MEASUREMENT_INTERVAL_SEC, 0, perf_cb);
-  }
-  gst_object_unref(converter_sink_pad);
-
   gst_element_set_state(pipeline, GST_STATE_PAUSED);
 
   if (gst_element_set_state(pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
@@ -443,13 +404,14 @@ main(gint argc, char *argv[])
     return -1;
   }
 
+	gst_debug_bin_to_dot_file(GST_BIN(pipeline), GST_DEBUG_GRAPH_SHOW_FULL_PARAMS, "pre-pipeline");
+
   g_print("\n");
   g_main_loop_run(loop);
 
+	gst_debug_bin_to_dot_file(GST_BIN(pipeline), GST_DEBUG_GRAPH_SHOW_FULL_PARAMS, "post-pipeline");
+
   gst_element_set_state(pipeline, GST_STATE_NULL);
-
-  g_free(perf_struct);
-
   if (SOURCE) {
     g_free(SOURCE);
   }

@@ -23,31 +23,43 @@
  * https://www.github.com/marcoslucianops
  */
 
-#ifndef __DEEPSTREAM_H__
+#ifndef __DEEPSTREAM_H__  // Header guard to prevent multiple inclusions
 #define __DEEPSTREAM_H__
 
+// Macro definitions for finding maximum and minimum values
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
+// Standard C library headers
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+// GLib and GStreamer headers
+#include <glib.h>
+#include <gst/gst.h>
+
+// NVIDIA DeepStream headers
 #include <nvdsgstutils.h>
 #include <cuda_runtime_api.h>
-
 #include "gstnvdsmeta.h"
 
+// Custom module headers
 #include "modules/interrupt.h"
-#include "modules/perf.h"
 
-static gchar *SOURCE = NULL;
-static gchar *CONFIG_INFER = NULL;
-static guint STREAMMUX_BATCH_SIZE = 1;
-static guint STREAMMUX_WIDTH = 1920;
-static guint STREAMMUX_HEIGHT = 1080;
-static guint GPU_ID = 0;
-static guint PERF_MEASUREMENT_INTERVAL_SEC = 5;
+// Static global variables
+static gchar **SOURCE = NULL;       // Pointer to pointer of gchar (string) for source
+static gchar *INPUT_FILE = NULL;     // Pointer to gchar (string) for input file
+static gchar *CONFIG_INFER = NULL;   // Pointer to gchar (string) for inference configuration file
+static guint STREAMMUX_WIDTH = 1280; // Width for stream multiplexer
+static guint STREAMMUX_HEIGHT = 720;// Height for stream multiplexer
+static guint GPU_ID = 0;             // GPU ID for CUDA operations
 
-gboolean JETSON = FALSE;
+// Array defining connections for a human skeleton
+const gint skeleton[][2] = {
+    {16, 14}, {14, 12}, {17, 15}, {15, 13}, {12, 13}, {6, 12}, {7, 13}, 
+    {6, 7}, {6, 8}, {7, 9}, {8, 10}, {9, 11}, {2, 3}, {1, 2}, {1, 3}, 
+    {2, 4}, {3, 5}, {4, 6}, {5, 7}
+};
 
-const gint skeleton[][2] = {{16, 14}, {14, 12}, {17, 15}, {15, 13}, {12, 13}, {6, 12}, {7, 13}, {6, 7}, {6, 8}, {7, 9},
-    {8, 10}, {9, 11}, {2, 3}, {1, 2}, {1, 3}, {2, 4}, {3, 5}, {4, 6}, {5, 7}};
-
-#endif
+#endif  // End of header guard
