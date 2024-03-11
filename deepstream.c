@@ -42,6 +42,9 @@ parse_pose_from_meta(NvDsFrameMeta *frame_meta, NvDsObjectMeta *obj_meta)
 {
   guint num_joints = obj_meta->mask_params.size / (sizeof(float) * 3);
 
+  if (num_joints == 0)
+    return;
+
   gfloat gain = MIN((gfloat) obj_meta->mask_params.width / STREAMMUX_WIDTH,
       (gfloat) obj_meta->mask_params.height / STREAMMUX_HEIGHT);
   gfloat pad_x = (obj_meta->mask_params.width - STREAMMUX_WIDTH * gain) / 2.0;
